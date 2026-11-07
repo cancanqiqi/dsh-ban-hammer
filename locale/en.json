@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Region ban hammer",
+    "description": "Scores time zone, system language and UTC offset into a region score, can ban the account by removing API keys and the sign-in credential, moves configured files into a local trash, and gives the agent a ban tool."
+  }
+}

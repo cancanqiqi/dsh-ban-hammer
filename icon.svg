@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Region ban hammer">
+  <rect width="64" height="64" rx="14" fill="#111827"/>
+  <circle cx="30" cy="30" r="14" fill="none" stroke="#9ca3af" stroke-width="2.5"/>
+  <path d="M20 20c6 4 14 4 20 0M20 40c6-4 14-4 20 0" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round"/>
+  <path d="M16 48 48 16" stroke="#f87171" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M43 13h8v8" fill="none" stroke="#f87171" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

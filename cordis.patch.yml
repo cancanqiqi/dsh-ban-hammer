@@ -1,0 +1,36 @@
+# dsh-ban-hammer — bundle patch
+#
+# Inserted into the active profile by `plugin_manager` (install_bundle) or by
+# `dsh plugin --profile <name> add link:<this directory>`.
+#
+# The row ships disarmed: `dryRun: true` means the region score is measured and
+# logged, the notice can be previewed, and nothing is ever deleted. Change it
+# to `false` to arm real bans.
+- insert:
+    - id: dsh-ban-hammer
+      name: dsh-ban-hammer
+      config:
+        # true: measure only. simulate/reset stay available for previewing the
+        # notice. false: turns can really ban, and the agent tool really bans.
+        dryRun: true
+        # Probability of a ban per finished turn at a perfect region score.
+        # Below `scoreFloor` the probability is zero; the curve is linear
+        # between the floor and 1.
+        banChancePerTurn: 0.08
+        scoreFloor: 0.35
+        # Credential references removed by a ban (names as they appear under
+        # `refs:` in $DSH_HOME/.credentials.yaml).
+        purgeApiKeys:
+          - DEEPSEEK_API_KEY
+        # Remove the DeepSeek platform sign-in grant as well.
+        purgeLogin: true
+        # Optional files/directories moved into
+        # $DSH_HOME/ban-hammer-trash/<timestamp>/ instead of being deleted.
+        purgeFiles: []
+        # Registers the model-facing `ban_account` tool.
+        agentBanTool: true
+        # Random delay between the deciding turn and the ban itself.
+        banDelayMinMs: 800
+        banDelayMaxMs: 5000
+        # Log every turn's score and probability to the Host console.
+        verbose: false
