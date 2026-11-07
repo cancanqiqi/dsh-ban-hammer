@@ -25,17 +25,19 @@ function harness(config, options = {}) {
   const edits = [];
   const root = { id: 'root-session' };
   const other = { id: 'child-session' };
+  const entry = { options: { id: 'dsh-ban-hammer' } };
   const editor = options.noEditor
     ? undefined
     : {
-        edit: async (entry, change) => {
+        entries: () => (options.notAddressable ? [] : [entry]),
+        edit: async (target, change) => {
           const next = change({ ...(options.current ?? {}) });
-          edits.push({ entry, next });
+          edits.push({ entry: target, next });
           return next;
         },
       };
   const ctx = {
-    fiber: options.noEntry ? undefined : { entry: { options: { id: 'dsh-ban-hammer' } } },
+    fiber: options.noEntry ? undefined : { entry },
     get: (name) => (name === 'configEditor' ? editor : undefined),
     effect: (fn) => {
       const disposer = fn();
@@ -385,6 +387,12 @@ test('settings cannot be saved when the profile exposes no editor', async () => 
       }),
     );
     assert.equal(refused.status, 409);
+
+    // A row the editor does not address is reported as not editable too.
+    const detached = harness({ dryRun: true }, { notAddressable: true });
+    const detachedRoute = detached.routes.find((candidate) => candidate.path === SETTINGS_ROUTE);
+    const detachedRead = await (await detachedRoute.fetch(new Request(`http://localhost${SETTINGS_ROUTE}`))).json();
+    assert.equal(detachedRead.editable, false);
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;

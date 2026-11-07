@@ -896,13 +896,25 @@ function apply(ctx, rawConfig) {
   /** The profile's config editor, when this profile has one. */
   const editorOf = () => ctx.get('configEditor');
 
+  /** True when this row can actually be edited through the profile editor. */
+  const canEdit = () => {
+    const editor = editorOf();
+    const entry = entryOf();
+    if (editor === undefined || entry === undefined) return false;
+    try {
+      return editor.entries().includes(entry);
+    } catch {
+      return false;
+    }
+  };
+
   /** Everything the Settings page renders. */
   const settingsPayload = () => {
     const entry = entryOf();
     return {
       config: { ...config, regionTimeZones: config.regionTimeZones.slice(), purgeApiKeys: config.purgeApiKeys.slice(), purgeFiles: config.purgeFiles.slice() },
       entryId: entry?.options?.id ?? null,
-      editable: editorOf() !== undefined && entry !== undefined,
+      editable: canEdit(),
       state: snapshot(),
     };
   };
@@ -927,7 +939,7 @@ function apply(ctx, rawConfig) {
           }
           const editor = editorOf();
           const entry = entryOf();
-          if (editor === undefined || entry === undefined) {
+          if (!canEdit() || editor === undefined || entry === undefined) {
             return json(
               {
                 ok: false,
