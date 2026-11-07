@@ -61,6 +61,8 @@ window.__ModuleLoader__.load({
       'bnh.armed': 'Armed',
       'bnh.dry': 'Dry run',
       'bnh.bannedState': 'Banned',
+      'bnh.stateLabel': 'State',
+      'bnh.normalState': 'Active',
       'bnh.previewBan': 'Preview ban screen',
       'bnh.resetPreview': 'Reset preview',
       'bnh.secRegion': 'Region check',
@@ -133,6 +135,8 @@ window.__ModuleLoader__.load({
       'bnh.armed': '已上膛',
       'bnh.dry': '演练中',
       'bnh.bannedState': '已封禁',
+      'bnh.stateLabel': '状态',
+      'bnh.normalState': '正常',
       'bnh.previewBan': '预览封禁界面',
       'bnh.resetPreview': '重置预览',
       'bnh.secRegion': '地区检测',
@@ -628,7 +632,7 @@ window.__ModuleLoader__.load({
           h(
             'p',
             { className: 'bnh-field-help' },
-            status === 'failed' ? `${translate('invalid')} ${reason}` : translate('saving'),
+            status === 'failed' ? reason : '',
           ),
         );
       }
@@ -731,8 +735,8 @@ window.__ModuleLoader__.load({
             h(Fact, { label: translate('rollsLabel'), value: String(live.state?.rolls ?? 0) }),
             h(Fact, { label: translate('chanceLabel'), value: percentOf(live.state?.lastRoll?.probability ?? 0) }),
             h(Fact, {
-              label: translate('sourceLabel'),
-              value: live.state?.banned === true ? translate('bannedState') : translate('unknown'),
+              label: translate('stateLabel'),
+              value: live.state?.banned === true ? translate('bannedState') : translate('normalState'),
             }),
           ),
           h(
