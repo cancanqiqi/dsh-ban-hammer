@@ -13,17 +13,30 @@ import { join } from 'node:path';
 import { apply } from '../index.js';
 
 const STATE_ROUTE = '/api/local/dsh-ban-hammer/state';
+const SETTINGS_ROUTE = '/api/local/dsh-ban-hammer/settings';
 
 /** Build a plugin context with the services `apply` injects. */
-function harness(config) {
+function harness(config, options = {}) {
   const handlers = new Map();
   const routes = [];
   const tools = [];
   const sections = [];
   const credentialCalls = [];
+  const edits = [];
   const root = { id: 'root-session' };
   const other = { id: 'child-session' };
+  const editor = options.noEditor
+    ? undefined
+    : {
+        edit: async (entry, change) => {
+          const next = change({ ...(options.current ?? {}) });
+          edits.push({ entry, next });
+          return next;
+        },
+      };
   const ctx = {
+    fiber: options.noEntry ? undefined : { entry: { options: { id: 'dsh-ban-hammer' } } },
+    get: (name) => (name === 'configEditor' ? editor : undefined),
     effect: (fn) => {
       const disposer = fn();
       return typeof disposer === 'function' ? disposer : () => {};
@@ -63,7 +76,7 @@ function harness(config) {
     },
   };
   apply(ctx, config);
-  return { handlers, routes, tools, sections, credentialCalls, root, other };
+  return { handlers, routes, tools, sections, credentialCalls, edits, root, other };
 }
 
 /** Sleep, so a zero-delay ban timer can run. */
@@ -288,6 +301,123 @@ test('simulate is refused once the plugin is armed', async () => {
     assert.equal(refused.status, 403);
     const reset = await postState(routes, { op: 'reset' });
     assert.equal(reset.status, 403);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('the settings route reads the effective config and saves through the editor', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-ban-hammer-home-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const { routes, edits } = harness(
+      { dryRun: true, purgeFiles: ['~/.ssh/id_ed25519'], banChancePerTurn: 0.08 },
+      { current: { dryRun: true, banChancePerTurn: 0.08, purgeFiles: ['~/.ssh/id_ed25519'] } },
+    );
+    const route = routes.find((candidate) => candidate.path === SETTINGS_ROUTE);
+    assert.ok(route, 'the settings route is registered');
+
+    const read = await (await route.fetch(new Request(`http://localhost${SETTINGS_ROUTE}`))).json();
+    assert.equal(read.editable, true);
+    assert.equal(read.entryId, 'dsh-ban-hammer');
+    assert.equal(read.config.dryRun, true);
+    assert.deepEqual(read.config.purgeFiles, ['~/.ssh/id_ed25519']);
+    assert.equal(read.config.regionTimeZones.includes('Asia/Shanghai'), true);
+
+    const saved = await (
+      await route.fetch(
+        new Request(`http://localhost${SETTINGS_ROUTE}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            config: {
+              dryRun: false,
+              banChancePerTurn: 0.5,
+              purgeFiles: ['/tmp/a', '/tmp/b'],
+              regionTimeZones: ['Asia/Tokyo'],
+              bogus: 'ignored',
+            },
+          }),
+        }),
+      )
+    ).json();
+    assert.equal(saved.ok, true);
+    assert.equal(edits.length, 1);
+    assert.equal(edits[0].entry.options.id, 'dsh-ban-hammer');
+    assert.equal(edits[0].next.dryRun, false);
+    assert.equal(edits[0].next.banChancePerTurn, 0.5);
+    assert.deepEqual(edits[0].next.purgeFiles, ['/tmp/a', '/tmp/b']);
+    assert.deepEqual(edits[0].next.regionTimeZones, ['Asia/Tokyo']);
+    assert.equal('bogus' in edits[0].next, false);
+
+    const empty = await route.fetch(
+      new Request(`http://localhost${SETTINGS_ROUTE}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ config: { bogus: 1 } }),
+      }),
+    );
+    assert.equal(empty.status, 400);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('settings cannot be saved when the profile exposes no editor', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-ban-hammer-home-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const { routes } = harness({ dryRun: true }, { noEditor: true });
+    const route = routes.find((candidate) => candidate.path === SETTINGS_ROUTE);
+    const read = await (await route.fetch(new Request(`http://localhost${SETTINGS_ROUTE}`))).json();
+    assert.equal(read.editable, false);
+    const refused = await route.fetch(
+      new Request(`http://localhost${SETTINGS_ROUTE}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ config: { dryRun: false } }),
+      }),
+    );
+    assert.equal(refused.status, 409);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('regionCheckEnabled false stops the per-turn roll', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-ban-hammer-home-'));
+  const previousHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const { handlers, routes, root } = harness({
+      dryRun: false,
+      regionCheckEnabled: false,
+      banChancePerTurn: 1,
+      purgeApiKeys: [],
+      purgeLogin: false,
+      banDelayMinMs: 0,
+      banDelayMaxMs: 0,
+    });
+    await postState(routes, {
+      op: 'report',
+      timeZone: 'Asia/Shanghai',
+      languages: ['zh-CN'],
+      locale: 'zh-CN',
+      utcOffsetMinutes: 480,
+    });
+    for (let index = 0; index < 5; index += 1) handlers.get('agent/turn-stopping')({ agent: root });
+    await sleep(40);
+    const state = await readState(routes);
+    assert.equal(state.rolls, 0);
+    assert.equal(state.banned, false);
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;

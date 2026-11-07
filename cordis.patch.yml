@@ -34,3 +34,20 @@
         banDelayMaxMs: 5000
         # Log every turn's score and probability to the Host console.
         verbose: false
+        # Region check. Every field below is editable from
+        # Settings → Plugins → Region ban hammer.
+        regionCheckEnabled: true
+        # Zones scored as mainland China. Clearing the list in the UI restores
+        # this built-in set.
+        regionTimeZones:
+          - Asia/Shanghai
+          - Asia/Urumqi
+          - Asia/Chongqing
+          - Asia/Harbin
+          - Asia/Kashgar
+          - Asia/Beijing
+          - PRC
+        # Relative weights; only their ratio matters.
+        timeZoneWeight: 0.45
+        languageWeight: 0.35
+        offsetWeight: 0.2

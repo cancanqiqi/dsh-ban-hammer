@@ -63,6 +63,9 @@ All fields live in the row's `config` block (`cordis.patch.yml`):
 | `agentBanTool` | `true` | Register the model-facing `ban_account` tool (and its prompt hint). |
 | `banDelayMinMs` / `banDelayMaxMs` | `800` / `5000` | Random delay between the deciding turn and the ban. |
 | `verbose` | `false` | Log each turn's score and probability to the Host console. |
+| `regionCheckEnabled` | `true` | Master switch for the per-turn region roll. |
+| `regionTimeZones` | mainland list | IANA zones scored as mainland China. |
+| `timeZoneWeight` / `languageWeight` / `offsetWeight` | `0.45` / `0.35` / `0.2` | Relative weights; only the ratio matters (`9/1/0` means time zone only). |
 
 What a real ban removes and keeps:
 
@@ -71,6 +74,23 @@ What a real ban removes and keeps:
 - **Kept:** `client-connection/browser-session`. Without it the page cannot reach the Host and the
   notice could never be shown. Also kept: sessions, attachments, the plugin itself. If you want the
   browser session gone too, remove it by hand after the restart.
+
+## Settings page
+
+Open **Settings → Plugins → Region ban hammer** to edit the common knobs without touching YAML:
+
+- **Current state** — live region score, zone, language, turns rolled, last turn's chance, ban state;
+  buttons to preview the ban screen and to reset a preview.
+- **Region check** — enable/disable, score floor, the three weights, and the zone list.
+- **Ban chance** — chance per turn and the random delay window.
+- **Ban action** — dry run, the sign-in record toggle, the API-key reference list, and the
+  files/folders to move into the local trash.
+- **Agent tool** — register `ban_account`, and verbose Host logging.
+
+Saving goes through the Harness config editor into the profile's `cordis.patch.yml`, so it survives
+upgrades and stays visible in git. A save restarts the plugin (this is what makes the new values
+active) and clears any ban or preview state. If the profile exposes no config editor, the page says
+so and the YAML stays the source of truth.
 
 ## Region score
 

@@ -53,6 +53,9 @@ dsh plugin --profile web remove dsh-ban-hammer
 | `agentBanTool` | `true` | 注册 `ban_account` 工具及提示词 |
 | `banDelayMinMs` / `banDelayMaxMs` | `800` / `5000` | 判定后到真正封禁的随机延迟 |
 | `verbose` | `false` | 在 Host 控制台打印每轮分值与概率 |
+| `regionCheckEnabled` | `true` | 每轮地区掷分的总开关 |
+| `regionTimeZones` | 大陆时区表 | 视为中国大陆的 IANA 时区 |
+| `timeZoneWeight` / `languageWeight` / `offsetWeight` | `0.45` / `0.35` / `0.2` | 相对权重，只看比例（`9/1/0` = 只看时区） |
 
 封禁会删什么、留什么：
 
@@ -60,6 +63,21 @@ dsh plugin --profile web remove dsh-ban-hammer
   `purgeFiles` 移到回收目录。
 - **留**：`client-connection/browser-session`——删了页面就连不上 Host，封禁提示也就无法显示。
   会话、附件、插件本身也都保留。
+
+## 插件设置页
+
+**设置 → 插件 → 地区封禁锤** 里可以直接改常用项，不用碰 YAML：
+
+- **当前状态**：实时地区分值、时区、语言、已掷轮次、上轮概率、是否封禁；带「预览封禁界面」和
+  「重置预览」两个按钮。
+- **地区检测**：开关、触发下限、三个信号权重、时区列表。
+- **触发概率**：每轮概率、随机延迟上下限。
+- **封禁动作**：演练模式、是否删登录记录、API key 引用列表、要移入回收目录的文件/目录。
+- **Agent 工具**：是否注册 `ban_account`、Host 详细日志。
+
+保存走 Harness 的 config editor，写进 profile 的 `cordis.patch.yml`，升级不丢、也能进 git。
+保存会重启插件（新配置才生效），当前封禁/演练状态会清空。若当前 profile 没有 config editor，
+页面会直接说明，此时仍以 YAML 为准。
 
 ## 打分规则
 

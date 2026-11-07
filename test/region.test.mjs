@@ -12,6 +12,7 @@ import {
   mainlandTimeZoneScore,
   measureRegion,
   normalizeConfig,
+  sanitizeSettings,
   utcOffsetScore,
 } from '../index.js';
 
@@ -85,11 +86,40 @@ test('probability is zero at or below the floor and linear above it', () => {
   assert.ok(banProbability(0.7, config) < banProbability(0.8, config));
 });
 
+test('custom zones and weights change the score', () => {
+  const measured = measureRegion(
+    { timeZone: 'Asia/Tokyo', languages: ['ja-JP'], utcOffsetMinutes: 540 },
+    { timeZoneWeight: 1, languageWeight: 0, offsetWeight: 0, regionTimeZones: ['Asia/Tokyo'] },
+  );
+  assert.equal(measured.value, 1);
+  assert.equal(measured.signals[0].detail, 'Asia/Tokyo');
+});
+
+test('weights are relative, so 1/1/1 averages the signals', () => {
+  const measured = measureRegion(
+    { timeZone: 'Asia/Shanghai', languages: ['en-US'], utcOffsetMinutes: 480 },
+    { timeZoneWeight: 1, languageWeight: 1, offsetWeight: 1 },
+  );
+  // zone 1, language 0, offset 1 → 2/3
+  assert.equal(measured.value, 0.667);
+  assert.equal(measured.signals[0].weight, 0.333);
+});
+
+test('all-zero weights produce a zero score', () => {
+  const measured = measureRegion(
+    { timeZone: 'Asia/Shanghai', languages: ['zh-CN'], utcOffsetMinutes: 480 },
+    { timeZoneWeight: 0, languageWeight: 0, offsetWeight: 0 },
+  );
+  assert.equal(measured.value, 0);
+});
+
 test('config normalization applies defaults and clamps bad input', () => {
   const defaults = normalizeConfig(undefined);
   assert.equal(defaults.dryRun, true);
   assert.equal(defaults.purgeLogin, true);
   assert.equal(defaults.agentBanTool, true);
+  assert.equal(defaults.regionCheckEnabled, true);
+  assert.equal(defaults.regionTimeZones.includes('Asia/Shanghai'), true);
   assert.deepEqual(defaults.purgeApiKeys, ['DEEPSEEK_API_KEY']);
   assert.deepEqual(defaults.purgeFiles, []);
 
@@ -101,6 +131,8 @@ test('config normalization applies defaults and clamps bad input', () => {
     purgeFiles: 'nope',
     banDelayMinMs: 5000,
     banDelayMaxMs: 100,
+    timeZoneWeight: 5,
+    regionTimeZones: [],
   });
   assert.equal(clamped.dryRun, false);
   assert.equal(clamped.banChancePerTurn, 1);
@@ -109,4 +141,30 @@ test('config normalization applies defaults and clamps bad input', () => {
   assert.deepEqual(clamped.purgeFiles, []);
   assert.equal(clamped.banDelayMinMs, 100);
   assert.equal(clamped.banDelayMaxMs, 5000);
+  assert.equal(clamped.timeZoneWeight, 1);
+  // An emptied zone list never disables the time-zone signal.
+  assert.equal(clamped.regionTimeZones.includes('Asia/Shanghai'), true);
+});
+
+test('the settings sanitizer keeps known fields and drops the rest', () => {
+  const partial = sanitizeSettings({
+    bogus: 1,
+    dryRun: false,
+    regionCheckEnabled: 'yes',
+    banChancePerTurn: 5,
+    purgeFiles: ['  /tmp/a  ', '', 42, '/tmp/a'],
+    regionTimeZones: ['Asia/Tokyo', '  '],
+    purgeApiKeys: ['KEY'],
+  });
+  assert.deepEqual(partial, {
+    dryRun: false,
+    banChancePerTurn: 1,
+    regionTimeZones: ['Asia/Tokyo'],
+    purgeApiKeys: ['KEY'],
+    purgeFiles: ['/tmp/a'],
+  });
+
+  // Clearing the zone box asks for the built-in list back.
+  assert.deepEqual(sanitizeSettings({ regionTimeZones: [] }), { regionTimeZones: [] });
+  assert.equal(normalizeConfig({ regionTimeZones: [] }).regionTimeZones.includes('Asia/Shanghai'), true);
 });

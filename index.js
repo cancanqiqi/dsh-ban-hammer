@@ -29,6 +29,9 @@ const name = 'dsh-ban-hammer';
 /** Authenticated route shared with the Client half. */
 const STATE_ROUTE = '/api/local/dsh-ban-hammer/state';
 
+/** Authenticated route the Settings page reads and writes. */
+const SETTINGS_ROUTE = '/api/local/dsh-ban-hammer/settings';
+
 /** Credential record holding the DeepSeek platform sign-in grant. */
 const ACCOUNT_RECORD = 'deepseek-account-platform/default';
 
@@ -61,6 +64,11 @@ const DEFAULTS = {
   banDelayMinMs: 800,
   banDelayMaxMs: 5000,
   verbose: false,
+  regionCheckEnabled: true,
+  regionTimeZones: [...MAINLAND_TIME_ZONES],
+  timeZoneWeight: WEIGHTS.timeZone,
+  languageWeight: WEIGHTS.language,
+  offsetWeight: WEIGHTS.offset,
 };
 
 /** Clamp a value into 0..1, treating non-numbers as 0. */
@@ -155,12 +163,15 @@ function chineseLanguageScore(tag) {
  * Score one IANA time zone as evidence of a mainland-China user.
  *
  * @param timeZone - the IANA zone name.
+ * @param zones - mainland zones to accept; defaults to the built-in set.
  * @returns A 0..1 signal.
  */
-function mainlandTimeZoneScore(timeZone) {
+function mainlandTimeZoneScore(timeZone, zones) {
   const zone = typeof timeZone === 'string' ? timeZone.trim() : '';
   if (zone.length === 0) return 0;
-  if (MAINLAND_TIME_ZONES.has(zone)) return 1;
+  const accepted =
+    zones instanceof Set ? zones : Array.isArray(zones) && zones.length > 0 ? new Set(zones) : MAINLAND_TIME_ZONES;
+  if (accepted.has(zone)) return 1;
   if (zone === 'Asia/Hong_Kong' || zone === 'Asia/Macau') return 0.15;
   if (zone === 'Asia/Taipei') return 0.1;
   return 0;
@@ -192,10 +203,16 @@ function utcOffsetScore(utcOffsetMinutes) {
  * @param input.languages - language tags from the page or the environment.
  * @param input.locale - the resolved default locale, when known.
  * @param input.utcOffsetMinutes - minutes east of UTC.
+ * @param options - scoring knobs from the row config.
+ * @param options.timeZoneWeight - raw weight for the time-zone signal.
+ * @param options.languageWeight - raw weight for the language signal.
+ * @param options.offsetWeight - raw weight for the UTC-offset signal.
+ * @param options.regionTimeZones - mainland zones to accept.
  * @returns The 0..1 score plus the signal breakdown.
  */
-function measureRegion(input) {
+function measureRegion(input, options) {
   const source = input !== null && typeof input === 'object' ? input : {};
+  const settings = options !== null && typeof options === 'object' ? options : {};
   const timeZone = typeof source.timeZone === 'string' ? source.timeZone.trim() : '';
   const offset = Number(source.utcOffsetMinutes);
   const tags = [];
@@ -218,10 +235,27 @@ function measureRegion(input) {
     }
   }
 
-  const tzScore = mainlandTimeZoneScore(timeZone);
+  // Weights are relative: only their ratio matters, so a user can set 1/1/1
+  // (equal) or 9/1/0 (time zone only) without normalizing by hand.
+  const rawWeights = {
+    timeZone: boundedNumber(settings.timeZoneWeight, WEIGHTS.timeZone, 0, 1),
+    language: boundedNumber(settings.languageWeight, WEIGHTS.language, 0, 1),
+    offset: boundedNumber(settings.offsetWeight, WEIGHTS.offset, 0, 1),
+  };
+  const totalWeight = rawWeights.timeZone + rawWeights.language + rawWeights.offset;
+  const weights =
+    totalWeight > 0
+      ? {
+          timeZone: rawWeights.timeZone / totalWeight,
+          language: rawWeights.language / totalWeight,
+          offset: rawWeights.offset / totalWeight,
+        }
+      : { timeZone: 0, language: 0, offset: 0 };
+
+  const tzScore = mainlandTimeZoneScore(timeZone, settings.regionTimeZones);
   const offsetScore = utcOffsetScore(offset);
   const value = clamp01(
-    tzScore * WEIGHTS.timeZone + languageScore * WEIGHTS.language + offsetScore * WEIGHTS.offset,
+    tzScore * weights.timeZone + languageScore * weights.language + offsetScore * weights.offset,
   );
 
   return {
@@ -234,21 +268,21 @@ function measureRegion(input) {
         id: 'timeZone',
         label: 'Time zone',
         value: round3(tzScore),
-        weight: WEIGHTS.timeZone,
+        weight: round3(weights.timeZone),
         detail: timeZone.length > 0 ? timeZone : 'unknown',
       },
       {
         id: 'language',
         label: 'System language',
         value: round3(languageScore),
-        weight: WEIGHTS.language,
+        weight: round3(weights.language),
         detail: language.length > 0 ? language : 'unknown',
       },
       {
         id: 'offset',
         label: 'UTC offset',
         value: round3(offsetScore),
-        weight: WEIGHTS.offset,
+        weight: round3(weights.offset),
         detail: Number.isFinite(offset)
           ? `UTC${offset >= 0 ? '+' : '-'}${String(Math.abs(offset) / 60).replace('.5', ':30')}`
           : 'unknown',
@@ -333,6 +367,7 @@ function normalizeConfig(raw) {
   const source = raw !== null && typeof raw === 'object' ? raw : {};
   const minimumDelay = boundedNumber(source.banDelayMinMs, DEFAULTS.banDelayMinMs, 0, 60000);
   const maximumDelay = boundedNumber(source.banDelayMaxMs, DEFAULTS.banDelayMaxMs, 0, 60000);
+  const zones = stringList(source.regionTimeZones, DEFAULTS.regionTimeZones);
   return {
     dryRun: source.dryRun !== false,
     banChancePerTurn: boundedNumber(source.banChancePerTurn, DEFAULTS.banChancePerTurn, 0, 1),
@@ -344,7 +379,71 @@ function normalizeConfig(raw) {
     banDelayMinMs: Math.min(minimumDelay, maximumDelay),
     banDelayMaxMs: Math.max(minimumDelay, maximumDelay),
     verbose: source.verbose === true,
+    regionCheckEnabled: source.regionCheckEnabled !== false,
+    // An explicitly emptied zone list falls back to the built-in set, so a user
+    // cannot accidentally disable the time-zone signal by clearing the box.
+    regionTimeZones: zones.length > 0 ? zones : DEFAULTS.regionTimeZones.slice(),
+    timeZoneWeight: boundedNumber(source.timeZoneWeight, DEFAULTS.timeZoneWeight, 0, 1),
+    languageWeight: boundedNumber(source.languageWeight, DEFAULTS.languageWeight, 0, 1),
+    offsetWeight: boundedNumber(source.offsetWeight, DEFAULTS.offsetWeight, 0, 1),
   };
+}
+
+/** Keep at most `limit` non-empty strings, each at most `maxLength` long. */
+function cleanStringList(values, limit, maxLength) {
+  if (!Array.isArray(values)) return undefined;
+  const cleaned = [];
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const text = value.trim().slice(0, maxLength);
+    if (text.length === 0 || cleaned.includes(text)) continue;
+    cleaned.push(text);
+    if (cleaned.length >= limit) break;
+  }
+  return cleaned;
+}
+
+/**
+ * Validate the fields the Settings page may write.
+ *
+ * Only recognized keys survive, so a hand-crafted POST cannot inject arbitrary
+ * config; `configEditor` then persists the merged row.
+ *
+ * @param input - the untrusted `config` body.
+ * @returns A partial row config.
+ */
+function sanitizeSettings(input) {
+  const source = input !== null && typeof input === 'object' ? input : {};
+  const next = {};
+  for (const key of ['dryRun', 'purgeLogin', 'agentBanTool', 'verbose', 'regionCheckEnabled']) {
+    if (typeof source[key] === 'boolean') next[key] = source[key];
+  }
+  const numbers = [
+    ['banChancePerTurn', 0, 1],
+    ['scoreFloor', 0, 1],
+    ['timeZoneWeight', 0, 1],
+    ['languageWeight', 0, 1],
+    ['offsetWeight', 0, 1],
+    ['banDelayMinMs', 0, 60000],
+    ['banDelayMaxMs', 0, 60000],
+  ];
+  for (const [key, minimum, maximum] of numbers) {
+    if (typeof source[key] === 'number' && Number.isFinite(source[key])) {
+      next[key] = Math.min(maximum, Math.max(minimum, source[key]));
+    }
+  }
+  const zones = cleanStringList(source.regionTimeZones, 40, 64);
+  // An empty list is meaningful: it asks for the built-in zones again, which
+  // `normalizeConfig` restores.
+  if (zones !== undefined) next.regionTimeZones = zones;
+  const keys = cleanStringList(source.purgeApiKeys, 20, 100);
+  if (keys !== undefined) next.purgeApiKeys = keys;
+  const files = cleanStringList(source.purgeFiles, 100, 512);
+  if (files !== undefined) next.purgeFiles = files;
+  if (next.banDelayMinMs !== undefined && next.banDelayMaxMs !== undefined && next.banDelayMinMs > next.banDelayMaxMs) {
+    next.banDelayMaxMs = next.banDelayMinMs;
+  }
+  return next;
 }
 
 /** One JSON response for the shared route. */
@@ -534,7 +633,12 @@ function apply(ctx, rawConfig) {
       utcOffsetMinutes:
         typeof report?.utcOffsetMinutes === 'number' ? report.utcOffsetMinutes : host.utcOffsetMinutes,
     };
-    const measured = measureRegion(merged);
+    const measured = measureRegion(merged, {
+      timeZoneWeight: config.timeZoneWeight,
+      languageWeight: config.languageWeight,
+      offsetWeight: config.offsetWeight,
+      regionTimeZones: config.regionTimeZones,
+    });
     state.measured = { ...measured, measuredAt: Date.now() };
     return state.measured;
   };
@@ -630,6 +734,7 @@ function apply(ctx, rawConfig) {
 
   /** Roll the per-turn probability and, on a hit, schedule the ban slightly later. */
   const rollTurn = (agent) => {
+    if (!config.regionCheckEnabled) return;
     const measured = measure();
     const probability = banProbability(measured.value, config);
     const hit = !config.dryRun && probability > 0 && Math.random() < probability;
@@ -784,6 +889,68 @@ function apply(ctx, rawConfig) {
       }),
     'dsh-ban-hammer: state route',
   );
+
+  /** The Loader entry this row is running as, when the profile exposes one. */
+  const entryOf = () => ctx.fiber?.entry;
+
+  /** The profile's config editor, when this profile has one. */
+  const editorOf = () => ctx.get('configEditor');
+
+  /** Everything the Settings page renders. */
+  const settingsPayload = () => {
+    const entry = entryOf();
+    return {
+      config: { ...config, regionTimeZones: config.regionTimeZones.slice(), purgeApiKeys: config.purgeApiKeys.slice(), purgeFiles: config.purgeFiles.slice() },
+      entryId: entry?.options?.id ?? null,
+      editable: editorOf() !== undefined && entry !== undefined,
+      state: snapshot(),
+    };
+  };
+
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: SETTINGS_ROUTE,
+        methods: ['GET', 'HEAD', 'POST'],
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          if (request.method === 'GET' || request.method === 'HEAD') return json(settingsPayload());
+          let body;
+          try {
+            body = await request.json();
+          } catch {
+            return json({ ok: false, error: 'invalid JSON body' }, 400);
+          }
+          const partial = sanitizeSettings(body?.config);
+          if (Object.keys(partial).length === 0) {
+            return json({ ok: false, error: 'no recognized setting was supplied' }, 400);
+          }
+          const editor = editorOf();
+          const entry = entryOf();
+          if (editor === undefined || entry === undefined) {
+            return json(
+              {
+                ok: false,
+                error:
+                  'This profile exposes no config editor, so settings cannot be saved from here. Edit the row config in the profile patch instead.',
+              },
+              409,
+            );
+          }
+          try {
+            // The editor validates, serializes the write and reconciles the
+            // Loader, so the change lands in the profile patch the Harness owns.
+            await editor.edit(entry, (current) => ({ ...current, ...partial }));
+          } catch (error) {
+            return json({ ok: false, error: messageOf(error) }, 409);
+          }
+          // The row restarts when a non-volatile field changes, so this response
+          // describes the config the next apply will read.
+          return json({ ok: true, config: normalizeConfig({ ...config, ...partial }) });
+        },
+      }),
+    'dsh-ban-hammer: settings route',
+  );
 }
 
 export {
@@ -797,5 +964,6 @@ export {
   measureRegion,
   name,
   normalizeConfig,
+  sanitizeSettings,
   utcOffsetScore,
 };

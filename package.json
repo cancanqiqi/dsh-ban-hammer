@@ -1,6 +1,6 @@
 {
   "name": "dsh-ban-hammer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Region-gated account bans for DeepSeek Harness: scores local region signals, can remove API keys and sign-in credentials, moves configured files to a local trash, and gives the agent a ban tool.",
   "license": "MIT",
   "type": "module",
